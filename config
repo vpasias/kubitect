@@ -255,14 +255,137 @@ virtctl stop testvm -n vm && kubectl delete vm testvm -n vm
 # Deploy Metrics Server
 # https://www.server-world.info/en/note?os=Debian_13&p=kubernetes&f=14
 
-# Monitoring based on Prometheus stack
-# https://spacelift.io/blog/prometheus-kubernetes
+#################################################################################################################################################################
+### Monitoring based on Prometheus stack ###
+### https://spacelift.io/blog/prometheus-kubernetes ### 
+#################################################################################################################################################################
+
 curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
 chmod 700 get_helm.sh && ./get_helm.sh
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 helm install kube-prometheus-stack --create-namespace --namespace kube-prometheus-stack prometheus-community/kube-prometheus-stack
 kubectl -n kube-prometheus-stack get pods
+
+# Expose Prometheus UI
+kubectl port-forward -n kube-prometheus-stack svc/kube-prometheus-stack-prometheus 9090:9090
+
+# Expose Graphana UI
+ kubectl port-forward -n kube-prometheus-stack svc/kube-prometheus-stack-grafana 8080:80
+
+#################################################################################################################################################################
+### Install Hadoop ###
+### https://github.com/pfisterer/apache-hadoop-helm ###
+### https://github.com/matthewrossi/adm-laboratory-hadoop/tree/main ###
+#################################################################################################################################################################
+
+tee > hadoop_values.yaml <<EOF
+image:
+  repository: farberg/apache-hadoop
+  tag: 3.4.1
+  pullPolicy: IfNotPresent
+
+# The version of the hadoop libraries being used in the image.
+hadoopVersion: 3.4.1
+logLevel: INFO
+
+# Select antiAffinity as either hard or soft, default is soft
+antiAffinity: "soft"
+
+hdfs:
+  nameNode:
+    pdbMinAvailable: 1
+
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "10m"
+      limits:
+        memory: "2048Mi"
+        cpu: "1000m"
+
+  dataNode:
+    # Will be used as dfs.datanode.hostname
+    # You still need to set up services + ingress for every DN
+    # Datanodes will expect to
+    externalHostname: example.com
+    externalDataPortRangeStart: 50500
+    externalHTTPPortRangeStart: 51000
+
+    replicas: 2
+
+    pdbMinAvailable: 1
+
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "10m"
+      limits:
+        memory: "2048Mi"
+        cpu: "1000m"
+
+  webhdfs:
+    enabled: true
+
+yarn:
+  resourceManager:
+    pdbMinAvailable: 1
+
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "10m"
+      limits:
+        memory: "2048Mi"
+        cpu: "2000m"
+
+  nodeManager:
+    pdbMinAvailable: 1
+
+    # The number of YARN NodeManager instances.
+    replicas: 2
+
+    # Create statefulsets in parallel (K8S 1.7+)
+    parallelCreate: false
+
+    # CPU and memory resources allocated to each node manager pod.
+    # This should be tuned to fit your workload.
+    resources:
+      requests:
+        memory: "2048Mi"
+        cpu: "1000m"
+      limits:
+        memory: "2048Mi"
+        cpu: "1000m"
+
+persistence:
+  nameNode:
+    enabled: false
+    storageClass: "-"
+    accessMode: ReadWriteOnce
+    size: 50Gi
+
+  dataNode:
+    enabled: false
+    storageClass: "-"
+    accessMode: ReadWriteOnce
+    size: 200Gi
+EOF
+
+helm repo add pfisterer-hadoop https://pfisterer.github.io/apache-hadoop-helm/
+helm upgrade --install hadoop pfisterer-hadoop/hadoop --values hadoop_values.yaml
+kubectl get pods -o wide -n default
+
+POD_NAME=$(kubectl get pods | grep yarn-nm-0 | awk '{print $1}')
+kubectl exec -it "${POD_NAME}" -- bash
+bin/yarn jar share/hadoop/mapreduce/hadoop-mapreduce-examples-3.4.1.jar pi 16 1000
+# exit
+
+# Expose YARN dashboard
+kubectl get pods | grep yarn-rm | awk '{print $1}' | xargs -i kubectl port-forward -n default {} 8088:8088
+
+# Expose HDFS
+kubectl get pods | grep hdfs-nn | awk '{print $1}' | xargs -i kubectl port-forward -n default {} 9870:9870
 
 #################################################################################################################################################################
 ### Delete Infrastructure ###
