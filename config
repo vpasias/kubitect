@@ -1,0 +1,253 @@
+chmod +x cloudlab-setup-ubuntu-tl.sh && ./cloudlab-setup-ubuntu-tl.sh && \
+sudo apt-get install libvirt-daemon genisoimage libguestfs-tools libosinfo-bin virtinst qemu-kvm git vim net-tools wget curl bash-completion libvirt-daemon-system virt-manager bridge-utils libnss-libvirt libvirt-clients osinfo-db-tools intltool sshpass p7zip-full p7zip-rar uvtool python3-virtualenv -y && \
+sudo sed -i 's/hosts:          files dns/hosts:          files libvirt libvirt_guest dns/' /etc/nsswitch.conf && sudo lsmod | grep kvm && sudo reboot
+#sudo systemctl restart libvirtd && sudo systemctl status libvirtd
+
+screen
+# Press Return to continue
+# detach from session without killing it: Ctrl a d 
+# to see screen sessions: screen -ls
+# detach from closed session: screen -d -r 4058.pts-0.node0
+# enter session: screen -r 4058.pts-0.node0
+# exit a session and terminate it: exit
+
+sudo apt update -y && sudo apt install cockpit -y && sudo systemctl enable --now cockpit.socket && sudo apt install cockpit-machines -y && echo "root:gprm8350" | sudo chpasswd
+exit
+
+sudo -i
+
+cd /mnt/extra && cat /sys/module/kvm_intel/parameters/nested && cat /proc/cpuinfo | awk '/^processor/{print $3}' | wc -l && free -h && df -hT && sudo virsh list --all && sudo brctl show && \
+wget -O "/mnt/extra/osinfo-db.tar.xz" https://releases.pagure.org/libosinfo/osinfo-db-20240523.tar.xz && sudo osinfo-db-import --local "/mnt/extra/osinfo-db.tar.xz"
+
+# Install dependencies
+sudo apt update -y && sudo apt-get install apt-transport-https ca-certificates curl gnupg python3-venv -y && \
+sudo usermod -aG libvirt `id -un` && sudo adduser `id -un` libvirt-qemu && sudo adduser `id -un` kvm && sudo adduser `id -un` libvirt-dnsmasq && sudo sed -i 's/0770/0777/' /etc/libvirt/libvirtd.conf && \
+echo 0 | sudo tee /sys/module/kvm/parameters/halt_poll_ns && echo 'security_driver = "none"' | sudo tee /etc/libvirt/qemu.conf && sudo chmod 0644 /boot/vmlinuz* && \
+sudo sed -i -E 's,#?(security_driver)\s*=.*,\1 = "none",g' /etc/libvirt/qemu.conf && \
+sudo systemctl restart libvirtd && sudo systemctl status libvirtd && \
+sudo apt-get install -y docker.io unzip && sudo usermod -aG libvirt $USER && sudo usermod -aG docker $USER && \
+virsh pool-define-as default dir --target "/var/lib/libvirt/images" && virsh pool-build default && virsh pool-start default && virsh pool-autostart default
+
+exit
+
+sudo -i
+
+virsh list --all && virsh net-list --all && virsh pool-list 
+
+#Install Terraform:
+# see https://github.com/hashicorp/terraform/releases
+# renovate: datasource=github-releases depName=hashicorp/terraform
+#wget 'https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip' && \
+#unzip "terraform_1.8.5_linux_amd64.zip" && sudo install terraform /usr/local/bin && rm terraform terraform_*_linux_amd64.zip
+
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod +x kubectl && sudo mv kubectl /usr/local/bin && kubectl version
+
+########################################################################################################################################################################
+### Kubitect ###
+### https://kubitect.io/latest/ ###
+### https://github.com/musicdin/kubitect ###
+################################################################################################################################################
+
+mkdir -p /mnt/extra/virt && mkdir -p /mnt/extra/tf && cd /mnt/extra/tf
+
+virtualenv .venv && source .venv/bin/activate
+
+curl -o kubitect.tar.gz -L https://dl.kubitect.io/linux/amd64/latest && tar -xzf kubitect.tar.gz && sudo mv kubitect /usr/local/bin/ && kubitect --version
+
+source <(kubitect completion bash) && kubitect completion bash > /etc/bash_completion.d/kubitect
+
+#kubitect export preset --name getting-started > cluster.yaml
+#kubitect apply --config cluster.yaml
+#kubectl --context k8s-cluster get nodes
+
+tee > mcluster.yaml <<EOF
+hosts:
+  - name: localhost
+    connection:
+      type: local
+    mainResourcePoolPath: /mnt/extra/virt/
+    dataResourcePools:
+      - name: data-pool
+        path: /mnt/extra/virt/
+
+cluster:
+  name: vip
+  network:
+    mode: nat
+    cidr: 192.168.113.0/24
+  nodeTemplate:
+    user: k8s
+    cpuMode: host-passthrough
+    updateOnBoot: true
+    ssh:
+      addToKnownHosts: true
+    os:
+      distro: debian12
+  nodes:
+    loadBalancer:
+      vip: 192.168.113.200
+      instances:
+        - id: 1
+          ip: 192.168.113.201
+        - id: 2
+          ip: 192.168.113.202
+    master:
+      default:
+        ram: 32
+        cpu: 8
+        mainDiskSize: 100
+      instances:
+        - id: 1
+          ip: 192.168.113.10
+        - id: 2
+          ip: 192.168.113.11
+        - id: 3
+          ip: 192.168.113.12
+    worker:
+      default:
+        ram: 32
+        cpu: 8
+        mainDiskSize: 100
+      instances:
+        - id: 1
+          ip: 192.168.113.20
+          dataDisks:
+            - name: sdb
+              pool: data-pool
+              size: 100
+        - id: 2
+          ip: 192.168.113.21
+          dataDisks:
+            - name: sdb
+              pool: data-pool
+              size: 100
+        - id: 3
+          ip: 192.168.113.23
+          dataDisks:
+            - name: sdb
+              pool: data-pool
+              size: 100
+
+kubernetes:
+  version: v1.30.4
+  networkPlugin: calico
+  other:
+    mergeKubeconfig: true
+
+addons:
+  kubespray:
+    # Nginx ingress controller deployment
+    ingress_nginx_enabled: true
+    ingress_nginx_namespace: "openstack"
+    ingress_nginx_insecure_port: 80
+    ingress_nginx_secure_port: 443
+
+    # MetalLB deployment
+    metallb_enabled: true
+    metallb_namespace: "metallb-system"
+    metallb_speaker_enabled: true
+    metallb_ip_range:
+      - "192.168.113.221-192.168.113.254"
+    metallb_pool_name: "default"
+    metallb_auto_assign: true
+    metallb_version: v0.13.9
+    metallb_protocol: "layer2"
+
+  rook:
+    enabled: true
+
+EOF
+
+kubitect apply --config mcluster.yaml
+
+kubectl cluster-info && kubectl get nodes -o wide && kubectl get pods -o wide --all-namespaces
+
+#################################################################################################################################################################
+### Installation of KubeVirt ###
+### https://kubevirt.io/user-guide/cluster_admin/installation/ ###
+### https://medium.com/btech-engineering/deploy-your-vm-in-kubernetes-cluster-using-kubevirt-5a544a9b4223 ###
+### https://dev.to/thenjdevopsguy/kubernetes-for-the-sysadmin-enter-kubevirt-5024 ###
+#################################################################################################################################################################
+
+# Point at latest release
+export RELEASE=$(curl https://storage.googleapis.com/kubevirt-prow/release/kubevirt/kubevirt/stable.txt)
+# Deploy the KubeVirt operator
+kubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/${RELEASE}/kubevirt-operator.yaml
+# Create the KubeVirt CR (instance deployment request) which triggers the actual installation
+kubectl apply -f https://github.com/kubevirt/kubevirt/releases/download/${RELEASE}/kubevirt-cr.yaml
+# wait until all KubeVirt components are up
+#kubectl -n kubevirt wait kv kubevirt --for condition=Available
+kubectl get pods -n kubevirt
+
+# Install virtctl
+VERSION=$(kubectl get kubevirt.kubevirt.io/kubevirt -n kubevirt -o=jsonpath="{.status.observedKubeVirtVersion}")
+ARCH=$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/') || windows-amd64.exe
+#echo ${ARCH}
+curl -L -o virtctl https://github.com/kubevirt/kubevirt/releases/download/${VERSION}/virtctl-${VERSION}-${ARCH}
+chmod +x virtctl && sudo install virtctl /usr/local/bin && virtctl version
+
+# Create example VM
+
+tee > /tmp/tvm.yaml <<EOF
+apiVersion: kubevirt.io/v1alpha3
+kind: VirtualMachine
+metadata:
+  name: testvm
+spec:
+  running: false
+  template:
+    metadata:
+      labels:
+        kubevirt.io/size: small
+        kubevirt.io/domain: ubuntu-noble
+    spec:
+      domain:
+        cpu:
+          cores: 1
+        devices:
+          disks:
+            - name: containervolume
+              disk:
+                bus: virtio
+            - name: cloudinitvolume
+              disk:
+                bus: virtio
+          interfaces:
+          - name: default
+            masquerade: {}
+        resources:
+          requests:
+            memory: 2048M
+      networks:
+      - name: default
+        pod: {}
+      volumes:
+        - name: containervolume
+          containerDisk:
+            image: tedezed/ubuntu-container-disk:24.04
+        - name: cloudinitvolume
+          cloudInitNoCloud:
+            userData: |-
+              #cloud-config
+              chpasswd:
+                list: |
+                  ubuntu:ubuntu
+                  root:toor
+                expire: False
+EOF
+
+kubectl create ns vm
+kubectl apply -f /tmp/tvm.yaml -n vm
+
+kubectl get vms -n vm
+kubectl get vms -o yaml testvm -n vm
+virtctl start testvm -n vm
+
+kubectl get vmis -n vm
+
+virtctl console testvm -n vm
+cat /sys/module/kvm_intel/parameters/nested && cat /proc/cpuinfo | awk '/^processor/{print $3}' | wc -l && free -h && df -hT && uname -a
+Ctrl + ]
+
+# Delete VM
+virtctl stop testvm -n vm && kubectl delete vm testvm -n vm
