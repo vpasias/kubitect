@@ -1,1 +1,1 @@
-# kubitect
+Kubernetes Cluster based on Kubitect
