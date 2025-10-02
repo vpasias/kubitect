@@ -251,3 +251,14 @@ Ctrl + ]
 
 # Delete VM
 virtctl stop testvm -n vm && kubectl delete vm testvm -n vm
+
+# Deploy Metrics Server
+# https://www.server-world.info/en/note?os=Debian_13&p=kubernetes&f=14
+
+#################################################################################################################################################################
+### Delete Infrastructure ###
+#################################################################################################################################################################
+
+#kubitect destroy --cluster k8s-cluster
+#terraform destroy -auto-approve
+kubitect destroy --cluster vip --auto-approve
