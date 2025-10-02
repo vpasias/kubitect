@@ -388,6 +388,39 @@ kubectl get pods | grep yarn-rm | awk '{print $1}' | xargs -i kubectl port-forwa
 kubectl get pods | grep hdfs-nn | awk '{print $1}' | xargs -i kubectl port-forward -n default {} 9870:9870
 
 #################################################################################################################################################################
+### Install Apache Spark ###
+### https://github.com/apache/spark-kubernetes-operator ###
+#################################################################################################################################################################
+
+helm repo add spark https://apache.github.io/spark-kubernetes-operator
+helm repo update
+helm install spark spark/spark-kubernetes-operator
+
+git clone https://github.com/apache/spark-kubernetes-operator.git
+
+# Run Spark Pi App
+kubectl apply -f spark-kubernetes-operator/examples/pi.yaml
+kubectl get sparkapp
+#kubectl delete sparkapp/pi
+
+# Run Spark Cluster
+kubectl apply -f spark-kubernetes-operator/examples/prod-cluster-with-three-workers.yaml
+kubectl get sparkcluster
+
+kubectl port-forward prod-master-0 6066 &
+./spark-kubernetes-operator/examples/submit-pi-to-prod.sh
+#"submissionId" : "driver-20251002185058-0000"
+curl http://localhost:6066/v1/submissions/status/driver-20251002185058-0000/
+#kubectl delete sparkcluster prod
+
+#kubectl get sparkapp && kubectl get sparkcluster
+
+# Remove Apache Spark Helm Chart and CRDs.
+helm uninstall spark
+kubectl delete crd sparkapplications.spark.apache.org
+kubectl delete crd sparkclusters.spark.apache.org
+
+#################################################################################################################################################################
 ### Delete Infrastructure ###
 #################################################################################################################################################################
 
