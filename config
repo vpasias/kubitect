@@ -7,12 +7,12 @@ screen
 # Press Return to continue
 # detach from session without killing it: Ctrl a d 
 # to see screen sessions: screen -ls
-# detach from closed session: screen -d -r 4058.pts-0.node0
-# enter session: screen -r 4058.pts-0.node0
+# detach from closed session: screen -d -r 2866.pts-0.node0
+# enter session: screen -r 2866.pts-0.node0
 # exit a session and terminate it: exit
 
-sudo apt update -y && sudo apt install cockpit -y && sudo systemctl enable --now cockpit.socket && sudo apt install cockpit-machines -y && echo "root:gprm8350" | sudo chpasswd
-exit
+#sudo apt update -y && sudo apt install cockpit -y && sudo systemctl enable --now cockpit.socket && sudo apt install cockpit-machines -y && echo "root:gprm8350" | sudo chpasswd
+#exit
 
 sudo -i
 
@@ -51,6 +51,7 @@ curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stabl
 mkdir -p /mnt/extra/virt && mkdir -p /mnt/extra/tf && cd /mnt/extra/tf
 
 virtualenv .venv && source .venv/bin/activate
+#deactivate
 
 curl -o kubitect.tar.gz -L https://dl.kubitect.io/linux/amd64/latest && tar -xzf kubitect.tar.gz && sudo mv kubitect /usr/local/bin/ && kubitect --version
 
@@ -98,11 +99,11 @@ cluster:
         mainDiskSize: 100
       instances:
         - id: 1
-          ip: 192.168.113.10
-        - id: 2
           ip: 192.168.113.11
-        - id: 3
+        - id: 2
           ip: 192.168.113.12
+        - id: 3
+          ip: 192.168.113.13
     worker:
       default:
         ram: 32
@@ -110,19 +111,25 @@ cluster:
         mainDiskSize: 100
       instances:
         - id: 1
-          ip: 192.168.113.20
+          ip: 192.168.113.21
           dataDisks:
             - name: sdb
               pool: data-pool
               size: 100
         - id: 2
-          ip: 192.168.113.21
+          ip: 192.168.113.22
           dataDisks:
             - name: sdb
               pool: data-pool
               size: 100
         - id: 3
           ip: 192.168.113.23
+          dataDisks:
+            - name: sdb
+              pool: data-pool
+              size: 100
+        - id: 4
+          ip: 192.168.113.24
           dataDisks:
             - name: sdb
               pool: data-pool
@@ -138,7 +145,7 @@ addons:
   kubespray:
     # Nginx ingress controller deployment
     ingress_nginx_enabled: true
-    ingress_nginx_namespace: "openstack"
+    ingress_nginx_namespace: "proxy"
     ingress_nginx_insecure_port: 80
     ingress_nginx_secure_port: 443
 
@@ -154,13 +161,48 @@ addons:
     metallb_protocol: "layer2"
 
   rook:
-    enabled: true
+    enabled: false
 
 EOF
 
 kubitect apply --config mcluster.yaml
 
 kubectl cluster-info && kubectl get nodes -o wide && kubectl get pods -o wide --all-namespaces
+
+#################################################################################################################################################################
+### Installation of Rook Ceph Storage via Helm (preferable) ###
+### https://rook.io/docs/rook/latest-release/Helm-Charts/operator-chart/ ###
+### https://rook.io/docs/rook/latest-release/Helm-Charts/ceph-cluster-chart/ ###
+########################################################################################
+
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod 700 get_helm.sh && ./get_helm.sh
+# helm version
+
+git clone --single-branch --branch release-1.18 https://github.com/rook/rook.git
+
+helm repo add rook-release https://charts.rook.io/release
+helm install --create-namespace --namespace rook-ceph rook-ceph rook-release/rook-ceph -f /mnt/extra/tf/rook/deploy/charts/rook-ceph/values.yaml
+kubectl get pods -n rook-ceph
+helm install --create-namespace --namespace rook-ceph rook-ceph-cluster --set operatorNamespace=rook-ceph rook-release/rook-ceph-cluster -f /mnt/extra/tf/rook/deploy/charts/rook-ceph/values.yaml
+
+kubectl get pods -n rook-ceph
+#kubectl get all -n rook-ceph
+#kubectl get -n rook-ceph jobs.batch && kubectl -n rook-ceph get cephcluster
+kubectl get sc -n rook-ceph && kubectl get pvc -n rook-ceph && kubectl get svc -n rook-ceph
+
+#Deploy Rook Ceph toolbox in Kubernetes
+kubectl apply -f /mnt/extra/tf/rook/deploy/examples/toolbox.yaml -n rook-ceph
+kubectl -n rook-ceph exec -it deploy/rook-ceph-tools -- bash
+ceph status
+#ceph osd status
+#ceph df && rados df
+exit
+
+#Access Ceph Dashboard
+kubectl get svc -n rook-ceph
+kubectl port-forward service/rook-ceph-mgr-dashboard 8443:8443 -n rook-ceph
+kubectl -n rook-ceph get secret rook-ceph-dashboard-password -o jsonpath="{['data']['password']}" | base64 --decode && echo
 
 #################################################################################################################################################################
 ### Installation of KubeVirt ###
@@ -182,6 +224,7 @@ kubectl get pods -n kubevirt
 # Install virtctl
 VERSION=$(kubectl get kubevirt.kubevirt.io/kubevirt -n kubevirt -o=jsonpath="{.status.observedKubeVirtVersion}")
 ARCH=$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/') || windows-amd64.exe
+#echo ${VERSION}
 #echo ${ARCH}
 curl -L -o virtctl https://github.com/kubevirt/kubevirt/releases/download/${VERSION}/virtctl-${VERSION}-${ARCH}
 chmod +x virtctl && sudo install virtctl /usr/local/bin && virtctl version
@@ -260,8 +303,6 @@ virtctl stop testvm -n vm && kubectl delete vm testvm -n vm
 ### https://spacelift.io/blog/prometheus-kubernetes ### 
 #################################################################################################################################################################
 
-curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-chmod 700 get_helm.sh && ./get_helm.sh
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 helm install kube-prometheus-stack --create-namespace --namespace kube-prometheus-stack prometheus-community/kube-prometheus-stack
@@ -410,7 +451,7 @@ kubectl get sparkcluster
 kubectl port-forward prod-master-0 6066 &
 ./spark-kubernetes-operator/examples/submit-pi-to-prod.sh
 #"submissionId" : "driver-20251002185058-0000"
-curl http://localhost:6066/v1/submissions/status/driver-20251002185058-0000/
+curl http://localhost:6066/v1/submissions/status/driver-20251004180159-0000/
 #kubectl delete sparkcluster prod
 
 #kubectl get sparkapp && kubectl get sparkcluster
@@ -424,6 +465,7 @@ kubectl delete crd sparkclusters.spark.apache.org
 ### Delete Infrastructure ###
 #################################################################################################################################################################
 
+#sudo apt-get remove --purge ansible && sudo apt-get autoremove --purge && sudo apt-get clean
 #kubitect destroy --cluster k8s-cluster
 #terraform destroy -auto-approve
 kubitect destroy --cluster vip --auto-approve
